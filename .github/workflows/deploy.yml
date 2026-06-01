@@ -1,0 +1,105 @@
+name: Deploy JupyterLite to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build JupyterLite site
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install JupyterLite build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            jupyterlite-core \
+            jupyterlite-pyodide-kernel \
+            jupyterlab
+
+      - name: Stage JupyterLite contents
+        run: |
+          rm -rf lite-content dist
+          mkdir -p lite-content
+
+          # Put notebooks at the top level of JupyterLite's virtual filesystem.
+          # This keeps notebook links simple and makes sibling imports possible.
+          if [ -d notebooks ]; then
+            cp -R notebooks/. lite-content/
+          fi
+
+          # spatial_lite.py must be included BEFORE `jupyter lite build` so it is
+          # registered in the JupyterLite contents manifest. Copying it after the
+          # build leaves Pyodide unable to import it from notebooks.
+          if [ -f spatial_lite.py ]; then
+            cp spatial_lite.py lite-content/spatial_lite.py
+          else
+            echo "ERROR: spatial_lite.py not found at repository root" >&2
+            exit 1
+          fi
+
+          # Dataset files also need to be present before the build for browser use.
+          if [ -d data ]; then
+            cp -R data lite-content/data
+          else
+            echo "ERROR: data/ directory not found at repository root" >&2
+            exit 1
+          fi
+
+          if [ -f elements.csv ]; then cp elements.csv lite-content/elements.csv; fi
+          if [ -f README.md ]; then cp README.md lite-content/README.md; fi
+          if [ -f jupyter_lite_config.json ]; then cp jupyter_lite_config.json lite-content/jupyter_lite_config.json; fi
+
+          # Extra safety: if a notebook is opened from a subfolder or restored from
+          # browser storage, a sibling copy makes `import spatial_lite` resilient.
+          cp spatial_lite.py lite-content/notebooks_spatial_lite_copy.py
+
+      - name: Build JupyterLite site
+        run: |
+          jupyter lite build --contents lite-content --output-dir dist
+
+      - name: Verify helper module is in built contents
+        run: |
+          test -f dist/files/spatial_lite.py
+          test -d dist/files/data
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy site
+        id: deployment
+        uses: actions/deploy-pages@v4
