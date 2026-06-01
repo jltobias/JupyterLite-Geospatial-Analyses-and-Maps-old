@@ -1,0 +1,9 @@
+{
+  "LiteBuildConfig": {
+    "contents": [
+      "notebooks",
+      "data",
+      "spatial_lite.py"
+    ]
+  }
+}
